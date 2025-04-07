@@ -1,0 +1,6 @@
+snscrape 
+praw 
+ccxt 
+requests 
+textblob 
+pandas
