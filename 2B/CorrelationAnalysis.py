@@ -12,6 +12,123 @@ from textblob import TextBlob
 # Load environment variables
 load_dotenv()
 
+class HypeAnalyzer:
+    def __init__(self):
+        self.correlation_threshold = 0.7  # Minimum correlation to consider significant
+        self.volume_spike_threshold = 2.0  # 200% volume increase
+        
+    async def analyze(self, twitter_data, reddit_data, price_data):
+        """Core analysis comparing social hype vs market activity"""
+        results = {
+            'strong_signals': [],
+            'weak_signals': [],
+            'metrics': {}
+        }
+        
+        # 1. Preprocess data for alignment
+        aligned_data = self._align_data(twitter_data, reddit_data, price_data)
+        
+        # 2. Calculate key metrics
+        results['metrics'].update(self._calculate_correlations(aligned_data))
+        results['metrics'].update(self._detect_volume_spikes(aligned_data))
+        results['metrics'].update(self._sentiment_trends(aligned_data))
+        
+        # 3. Generate signals
+        results['strong_signals'] = self._find_strong_signals(aligned_data)
+        results['weak_signals'] = self._find_weak_signals(aligned_data)
+        
+        return results
+    
+    def _align_data(self, twitter, reddit, price):
+        """Combine all data into hourly buckets"""
+        # Ensure 'date' is a datetime object and set as index
+        twitter['date'] = pd.to_datetime(twitter['date'])
+        reddit['date'] = pd.to_datetime(reddit['date'])
+        price['timestamp'] = pd.to_datetime(price['timestamp'])
+
+        twitter.set_index('date', inplace=True)
+        reddit.set_index('date', inplace=True)
+        price.set_index('timestamp', inplace=True)
+        
+        # Resample price data to hourly
+        price_hourly = price.resample('1H').agg({
+            'close': 'last',
+            'volume': 'sum'
+        })
+        
+        # Combine social metrics
+        social_metrics = pd.DataFrame({
+            'twitter_mentions': twitter.resample('1H')['content'].count(),
+            'reddit_posts': reddit.resample('1H')['content'].count(),
+            'avg_sentiment': (twitter.resample('1H')['sentiment'].mean() + 
+                            reddit.resample('1H')['sentiment'].mean()) / 2
+        }).fillna(0)
+        
+        # Merge everything
+        return pd.merge(
+            price_hourly,
+            social_metrics,
+            left_index=True,
+            right_index=True,
+            how='left'
+        ).fillna(method='ffill')
+    
+    def _calculate_correlations(self, df):
+        """Calculate Pearson correlations between metrics"""
+        return {
+            'price_sentiment_corr': df['close'].corr(df['avg_sentiment']),
+            'volume_mentions_corr': df['volume'].corr(df['twitter_mentions'] + df['reddit_posts'])
+        }
+    
+    def _detect_volume_spikes(self, df):
+        """Identify sudden volume increases"""
+        df['volume_pct_change'] = df['volume'].pct_change()
+        spikes = df[df['volume_pct_change'] > self.volume_spike_threshold]
+        return {
+            'volume_spikes_count': len(spikes),
+            'last_volume_spike': spikes.index[-1] if not spikes.empty else None
+        }
+    
+    def _sentiment_trends(self, df):
+        """Analyze sentiment movement"""
+        return {
+            'sentiment_trend': 'up' if df['avg_sentiment'].iloc[-1] > df['avg_sentiment'].mean() else 'down',
+            'sentiment_volatility': df['avg_sentiment'].std()
+        }
+    
+    def _find_strong_signals(self, df):
+        """Conditions for strong hype validation"""
+        signals = []
+        
+        # Condition 1: Volume spike + social mentions increase
+        recent = df.iloc[-4:]  # Last 4 hours
+        if (recent['volume_pct_change'].mean() > 1.0 and 
+            recent['twitter_mentions'].mean() > df['twitter_mentions'].mean() * 1.5):
+            signals.append("STRONG_VOLUME_SOCIAL_CORRELATION")
+            
+        # Condition 2: Rising price + improving sentiment
+        if (df['close'].iloc[-1] > df['close'].iloc[-6] and 
+            df['avg_sentiment'].iloc[-1] > df['avg_sentiment'].iloc[-6]):
+            signals.append("PRICE_SENTIMENT_UPTREND")
+            
+        return signals
+    
+    def _find_weak_signals(self, df):
+        """Conditions where hype isn't backed by activity"""
+        signals = []
+        
+        # Condition 1: High mentions but flat volume
+        if (df['twitter_mentions'].iloc[-1] > df['twitter_mentions'].mean() * 2 and
+            abs(df['volume_pct_change'].iloc[-1]) < 0.3):
+            signals.append("HIGH_MENTIONS_LOW_VOLUME")
+            
+        # Condition 2: Positive sentiment but price dropping
+        if (df['avg_sentiment'].iloc[-1] > 0.5 and 
+            df['close'].iloc[-1] < df['close'].iloc[-6]):
+            signals.append("BULLISH_SENTIMENT_BEARISH_PRICE")
+            
+        return signals
+    
 # ======================
 # TWITTER SCRAPER (OAuth 1.0a)
 # ======================
@@ -64,7 +181,7 @@ class TwitterScraper:
         
         for tweet in response.get('data', []):
             tweets.append({
-                'date': tweet['created_at'],
+                'date': tweet['created_at'],  # Ensure 'created_at' is present
                 'content': tweet['text'],
                 'username': users.get(tweet['author_id']),
                 'likes': tweet['public_metrics']['like_count'],
@@ -168,6 +285,7 @@ async def main():
     print("🟡 Collecting Twitter data...")
     twitter_data = await twitter.get_tweets("PEPE OR memecoin lang:en -is:retweet")
     twitter_data = analyze_sentiment(twitter_data)
+    print(twitter_data.head())  # Add this after collecting the data to inspect it
 
     print("🟡 Collecting Reddit data...")
     reddit_data = await reddit.get_posts("PEPE OR memecoin")
@@ -194,6 +312,32 @@ async def main():
     print(f"📈 Market: {len(price_data)} price points")
     print(f"💾 Saved with timestamp: {timestamp}")
     print(f"{'='*40}\n")
+
+    print("🔍 Analyzing hype vs market data...")
+    analyzer = HypeAnalyzer()
+    analysis_results = await analyzer.analyze(twitter_data, reddit_data, price_data)
+    
+    # Save analysis results
+    pd.DataFrame(analysis_results['metrics'], index=[0]).to_csv(f'data/analysis_{timestamp}.csv')
+    
+    # Print actionable insights
+    print(f"\n{'='*40}")
+    print("Hype Analysis Results")
+    print(f"{'='*40}")
+    
+    if analysis_results['strong_signals']:
+        print("🚀 STRONG SIGNALS (Real Trend Likely)")
+        for signal in analysis_results['strong_signals']:
+            print(f"- {signal}")
+    
+    if analysis_results['weak_signals']:
+        print("\n WEAK SIGNALS (Possible Fake Hype)")
+        for signal in analysis_results['weak_signals']:
+            print(f"- {signal}")
+    
+    print("\n📊 Key Metrics:")
+    for metric, value in analysis_results['metrics'].items():
+        print(f"- {metric.replace('_', ' ').title()}: {value:.2f}")
 
 if __name__ == "__main__":
     # Create data directory if it doesn't exist
