@@ -41,29 +41,42 @@ class HypeAnalyzer:
     
     def _align_data(self, twitter, reddit, price):
         """Combine all data into hourly buckets"""
-        # Ensure 'date' is a datetime object and set as index
+
+        required_cols = ['date', 'content', 'sentiment']
+
+        for df_name, df in [('Twitter', twitter), ('Reddit', reddit)]:
+            for col in required_cols:
+                if col not in df.columns:
+                    raise ValueError(f"{df_name} data is missing required column: '{col}'")
+
+        if 'timestamp' in price.columns:
+            price['timestamp'] = pd.to_datetime(price['timestamp'])
+            price.set_index('timestamp', inplace=True)
+        else:
+            price.index = pd.to_datetime(price.index)
+
         twitter['date'] = pd.to_datetime(twitter['date'])
         reddit['date'] = pd.to_datetime(reddit['date'])
-        price['timestamp'] = pd.to_datetime(price['timestamp'])
 
         twitter.set_index('date', inplace=True)
         reddit.set_index('date', inplace=True)
-        price.set_index('timestamp', inplace=True)
-        
+
         # Resample price data to hourly
         price_hourly = price.resample('1H').agg({
             'close': 'last',
             'volume': 'sum'
         })
-        
+
         # Combine social metrics
         social_metrics = pd.DataFrame({
             'twitter_mentions': twitter.resample('1H')['content'].count(),
             'reddit_posts': reddit.resample('1H')['content'].count(),
-            'avg_sentiment': (twitter.resample('1H')['sentiment'].mean() + 
-                            reddit.resample('1H')['sentiment'].mean()) / 2
+            'avg_sentiment': (
+                twitter.resample('1H')['sentiment'].mean() +
+                reddit.resample('1H')['sentiment'].mean()
+            ) / 2
         }).fillna(0)
-        
+
         # Merge everything
         return pd.merge(
             price_hourly,
@@ -236,7 +249,8 @@ class MarketData:
                 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                 df['exchange'] = name
-                return df.set_index('timestamp')
+                return df
+
             except Exception as e:
                 print(f"{name} failed: {e}")
                 continue
@@ -254,7 +268,8 @@ class MarketData:
         response = requests.get(url, params=params).json()
         df = pd.DataFrame(response['prices'], columns=['timestamp', 'price'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        return df.set_index('timestamp')
+        return df
+
 
 # ======================
 # SENTIMENT ANALYSIS
@@ -315,6 +330,13 @@ async def main():
 
     print("🔍 Analyzing hype vs market data...")
     analyzer = HypeAnalyzer()
+    print("\n📋 Dataframe Column Checks:")
+    print(f"Twitter columns: {twitter_data.columns.tolist()}")
+    print(f"Reddit columns: {reddit_data.columns.tolist()}")
+    print(f"Market columns: {price_data.columns.tolist()}")
+    if twitter_data.empty or reddit_data.empty or price_data.empty:
+        print("❌ One or more data sources returned empty. Aborting analysis.")
+        return
     analysis_results = await analyzer.analyze(twitter_data, reddit_data, price_data)
     
     # Save analysis results
