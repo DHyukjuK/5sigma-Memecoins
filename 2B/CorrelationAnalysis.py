@@ -214,7 +214,7 @@ class RedditScraper:
             user_agent=os.getenv('REDDIT_USER_AGENT')
         )
     
-    async def get_posts(self, query, subreddit='CryptoCurrency', limit=100):
+    async def get_posts(self, query, subreddit='wallstreetbetscrypto+cryptocurrency+memecoins+solana+dogecoin+bitcoin+ethereum+ethtrader+solanamemecoins', limit=100):
         try:
             posts = []
             for submission in self.reddit.subreddit(subreddit).search(query, limit=limit):
