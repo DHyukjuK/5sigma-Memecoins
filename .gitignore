@@ -1,0 +1,15 @@
+# Mac system file
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# VSCode
+.vscode/
+
+# Testing and cache
+Testing/__pycache__/
+Run/
