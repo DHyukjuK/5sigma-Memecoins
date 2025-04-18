@@ -169,7 +169,7 @@ def plot_results(y_test, predictions, crypto_name):
     plt.grid(True)
     plt.show()
 
-def analyze_crypto(crypto_name, ticker, days_back=30):
+def analyze_crypto(crypto_name, ticker, days_back=90):
     """Full analysis pipeline"""
     print(f"\nAnalyzing {crypto_name} ({ticker}) for the past {days_back} days...")
     
