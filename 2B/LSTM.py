@@ -241,8 +241,8 @@ def analyze_crypto(crypto_name, ticker, days_back=30):
 
 if __name__ == "__main__":
     # Example usage
-    crypto_name = "Bitcoin"
-    ticker = "BTC-USD"
+    crypto_name = "Shiba Inu"
+    ticker = "SHIB-USD"
     
     model, X, y = analyze_crypto(crypto_name, ticker, days_back=30)
     
