@@ -29,11 +29,9 @@ while True:
                 "//button[.//text()[contains(., 'Got it')] or .//text()[contains(., 'Explore')]]"
             ))
         )
-        print(f"ℹ️ Dismissing tooltip: '{tooltip_button.text.strip()}'")
         driver.execute_script("arguments[0].click();", tooltip_button)
         time.sleep(0.5)
     except:
-        print("✅ All tooltips dismissed.")
         break
 
 # Wait for the Volatility Per Day section to be present
@@ -48,11 +46,22 @@ try:
     updated_span = soup.find("section", {"id": "day"}).find("span", class_="_averageValue_1cq16_28")
     if updated_span:
         daily_volatility = updated_span.get_text(strip=True)
-        print("📊 Current Daily Volatility:", daily_volatility)
     else:
-        print("❌ Volatility span not found.")
+        print("Volatility span not found.")
 except Exception as e:
-    print("❌ Error extracting volatility:", e)
+    print("Error extracting volatility:", e)
 
 # Done
 driver.quit()
+
+
+# 1. Remove the percent sign and convert to float
+volatility_percent = float(daily_volatility.strip('%'))
+
+# 2. Convert to decimal (e.g. 6.55% → 0.0655)
+volatility_decimal = volatility_percent / 100
+
+# 3. Square the decimal
+variance = volatility_decimal ** 2
+
+print("Volatility squared", variance)
