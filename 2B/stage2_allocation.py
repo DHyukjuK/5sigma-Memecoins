@@ -39,12 +39,12 @@ class OneAssetOptimizer:
 
 def main():
     # — user parameters —
-    crypto_name = "Bitcoin"
-    ticker      = "BTC-USD"
+    crypto_name = "Shiba Inu"
+    ticker      = "SHIB-USD"
     days_back   = 60        # how many days of history to fetch
     lookback    = 30        # window for variance
     rf          = 0.0001    # e.g. 0.01% per day
-    A_bucket    = 2         # risk aversion
+    A_bucket    = 1.8        # risk aversion
 
     # 1) fetch sentiment
     sent_df = get_reddit_sentiment(crypto_name)
