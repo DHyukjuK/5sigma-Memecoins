@@ -1,6 +1,7 @@
 import praw
 import pandas as pd
 import numpy as np
+import torch  
 from textblob import TextBlob
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
@@ -40,56 +41,54 @@ def init_reddit():
 # Initialize sentiment analyzer
 sia = SentimentIntensityAnalyzer()
 
-def get_reddit_sentiment(crypto_name, limit=50):
-    """Scrape Reddit posts about a cryptocurrency"""
+def get_reddit_sentiment(crypto_name, limit=500):
     reddit = init_reddit()
     if not reddit:
         return pd.DataFrame()
     
+    search_query = (
+        f"{crypto_name} OR SHIB OR #SHIB OR $SHIB OR SHIBA INU OR #SHIBA OR SHIBA OR SHIBAINU"
+    )
     posts = []
-    try:
-        search_query = f"{crypto_name} OR #{crypto_name} OR ${crypto_name}"
-        for submission in reddit.subreddit("cryptocurrency").search(
-            query=search_query,
-            limit=min(limit, 100),
-            sort="new",
-            time_filter="month"
-        ):
-            try:
-                post_date = datetime.fromtimestamp(submission.created_utc).date()
-                posts.append({
-                    'date': post_date,
-                    'title': submission.title,
-                    'text': submission.selftext,
-                    'score': submission.score
-                })
-                time.sleep(1)
-            except Exception as e:
-                print(f"Error processing submission: {str(e)}")
-                continue
-    except Exception as e:
-        print(f"Reddit search failed: {str(e)}")
-        return pd.DataFrame()
-    
+    now = datetime.utcnow()
+    one_day_ago = now - timedelta(days=1)
+
+    for submission in reddit.subreddit("all").search(
+        query=search_query,
+        limit=500,
+        sort="new",
+        time_filter="day"  # to reduce server load
+    ):
+        post_time = datetime.fromtimestamp(submission.created_utc)
+        if post_time < one_day_ago:
+            continue
+
+        posts.append({
+            'date': post_time.date(),
+            'title': submission.title,
+            'text': submission.selftext,
+            'score': submission.score
+        })
+        time.sleep(0.5)
+
     if not posts:
         return pd.DataFrame()
     
-    # Create DataFrame and analyze sentiment
     df = pd.DataFrame(posts)
     df['content'] = df['title'] + " " + df['text']
     df['polarity'] = df['content'].apply(lambda x: TextBlob(x).sentiment.polarity)
     df['subjectivity'] = df['content'].apply(lambda x: TextBlob(x).sentiment.subjectivity)
     df['vader'] = df['content'].apply(lambda x: sia.polarity_scores(x)['compound'])
-    
-    # Group by date
-    daily_sentiment = df.groupby('date').agg({
+
+    # Only return today's aggregated sentiment
+    sentiment_today = df.groupby('date').agg({
         'polarity': 'mean',
         'vader': 'mean',
         'score': 'sum',
         'subjectivity': 'mean'
     }).reset_index()
     
-    return daily_sentiment
+    return sentiment_today
 
 def get_crypto_data(ticker, start_date, end_date):
     """Get historical cryptocurrency data from Yahoo Finance"""
@@ -118,23 +117,24 @@ def get_crypto_data(ticker, start_date, end_date):
         return pd.DataFrame()
 
 def prepare_dataset(sentiment_df, price_df):
-    """Combine sentiment data with price data"""
     try:
-        # Convert date columns to datetime.date if they aren't already
         sentiment_df['date'] = pd.to_datetime(sentiment_df['date']).dt.date
         price_df['date'] = pd.to_datetime(price_df['date']).dt.date
-        
-        # Merge on date column
+
+        # Shift sentiment by 1 day back to align with price data (e.g., use 4/16 sentiment to predict 4/17 return)
+        sentiment_df['date'] = sentiment_df['date'].apply(lambda d: d - timedelta(days=1))
+
         merged = pd.merge(sentiment_df, price_df, on='date', how='inner')
-        
+
+        print("Merged dataset:", len(merged), "samples")
+
         if merged.empty:
             raise ValueError("Merge resulted in empty DataFrame - no overlapping dates")
-        
-        # Select features and target
+
         X = merged[['polarity', 'vader', 'score', 'subjectivity', 'Daily_Return']]
         y = merged['Next_Day_Return']
-        
         return X, y
+
     except Exception as e:
         print(f"Error preparing dataset: {str(e)}")
         return pd.DataFrame(), pd.DataFrame()
@@ -191,9 +191,41 @@ def analyze_crypto(crypto_name, ticker, days_back=30):
         print("Error: No price data available")
         return None, None, None
     
+    print(f"Sentiment data points: {len(sentiment_df)}")
+    print(f"Price data points: {len(price_df)}")
+    
     # Prepare dataset
     print("3. Preparing dataset...")
     X, y = prepare_dataset(sentiment_df, price_df)
+    print(f"Merged dataset: {len(X)} samples")
+    if len(X) <= 1:
+        print("\n⚠️ Not enough data to train a model. Skipping training...")
+        
+        print("\n🔍 24-Hour Sentiment Summary:")
+        print(X.iloc[0])
+
+        weights = np.array([5, 10, 0.01, 1, 0])
+        pred_return = X.iloc[0].values @ weights.T
+
+        print(f"\n📈 Estimated Return: {pred_return:.2f}%")
+        print("Suggested Action:", "BUY" if pred_return > 0 else "SELL")
+        
+        return None, X, y
+
+    if len(X) != 1:
+        print("Could not find sentiment + price for today. Try again later.")
+        return None, X, y
+
+    print("\n🔍 24-Hour Sentiment Summary:")
+    print(X.iloc[0])
+
+    # === Rule-based or pretrained weights ===
+    weights = np.array([5, 10, 0.01, 1, 0])  # [polarity, vader, score, subjectivity, Daily_Return]
+    pred_return = X.iloc[0].values @ weights.T
+
+    print(f"\n📈 Estimated Return: {pred_return:.2f}%")
+    print("Suggested Action:", "BUY" if pred_return > 0 else "SELL")
+
     from train_lstm_model import train_lstm_model
 
     model, scaler, seq_len = train_lstm_model(X, y)
@@ -244,7 +276,7 @@ if __name__ == "__main__":
     crypto_name = "Shiba Inu"
     ticker = "SHIB-USD"
     
-    model, X, y = analyze_crypto(crypto_name, ticker, days_back=30)
+    model, X, y = analyze_crypto(crypto_name, ticker, days_back=90)
     
     if model is None:
         print("\nAnalysis failed. Please check the error messages above.")
