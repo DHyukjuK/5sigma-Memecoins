@@ -24,14 +24,14 @@ class PortfolioAllocationEnv(gym.Env):
         return self._get_obs()
     
     def step(self, action: np.ndarray) -> Tuple[Dict, float, bool, dict]:
-        # Execute allocation
+        # Normalize action to valid portfolio weights
         allocation = self._normalize_allocation(action)
         
-        # Get synthetic returns based on market regime
-        returns = self._simulate_returns(self.regime_signals)
+        # Get asset returns based on current market regime
+        returns = self._get_asset_returns()
         new_value = self.portfolio_value * (1 + np.dot(allocation, returns))
         
-        # Calculate reward (Sharpe Ratio component)
+        # Calculate reward (Sharpe Ratio inspired)
         reward = self._calculate_reward(allocation, returns)
         
         # Update state
@@ -58,22 +58,25 @@ class PortfolioAllocationEnv(gym.Env):
         action = np.clip(action, self.action_space.low, self.action_space.high)
         return action / np.sum(action)
     
-    def _simulate_returns(self, regime: np.ndarray) -> np.ndarray:
-        """Generate asset returns based on market regime"""
-        # [PEPE, YT, PT, STABLES]
-        volatility_effect = 0.1 * regime[0]  # Higher volatility -> higher memecoin variance
-        yield_effect = 0.05 * regime[1]     # Yield demand boosts YT
-        funding_effect = -0.02 * regime[2]  # High funding -> negative perp returns
+    def _get_asset_returns(self) -> np.ndarray:
+        """Generate asset returns based on current market regime"""
+        # [PEPE_PERP, stETH_YT, ETH_PT, STABLES]
+        volatility_effect = 0.1 * self.regime_signals[0]  # Higher volatility -> higher memecoin variance
+        yield_effect = 0.05 * self.regime_signals[1]     # Yield demand boosts YT
+        funding_effect = -0.02 * self.regime_signals[2]  # High funding -> negative perp returns
         
-        return np.array([
-            0.02 + volatility_effect + funding_effect,  # PEPE
-            0.01 + yield_effect,                        # YT
-            0.005 - 0.3 * volatility_effect,            # PT
+        base_returns = np.array([
+            0.02 + volatility_effect + funding_effect,  # PEPE_PERP
+            0.01 + yield_effect,                        # stETH_YT
+            0.005 - 0.3 * volatility_effect,            # ETH_PT
             0.001                                       # STABLES
-        ]) + np.random.normal(0, 0.01, size=4)
+        ])
+        
+        # Add some noise
+        return base_returns + np.random.normal(0, 0.01, size=4)
     
     def _calculate_reward(self, allocation: np.ndarray, returns: np.ndarray) -> float:
-        """Sharpe Ratio inspired reward"""
+        """Sharpe Ratio inspired reward with risk penalty"""
         portfolio_return = np.dot(allocation, returns)
         risk_penalty = 0.5 * np.std(returns * allocation)
-        return portfolio_return / (risk_penalty + 1e-9)
+        return portfolio_return / (risk_penalty + 1e-9)  # Small epsilon to avoid division by zero

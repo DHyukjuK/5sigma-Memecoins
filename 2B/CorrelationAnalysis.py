@@ -62,20 +62,20 @@ class HypeAnalyzer:
         reddit.set_index('date', inplace=True)
 
         # Resample price data to hourly
-        price_hourly = price.resample('1H').agg({
+        # Change all instances of '1H' to '1h' (lowercase h)
+        price_hourly = price.resample('1h').agg({  # Line 65
             'close': 'last',
             'volume': 'sum'
         })
 
-        # Combine social metrics
         social_metrics = pd.DataFrame({
-            'twitter_mentions': twitter.resample('1H')['content'].count(),
-            'reddit_posts': reddit.resample('1H')['content'].count(),
+            'twitter_mentions': twitter.resample('1h')['content'].count(),  # Line 72
+            'reddit_posts': reddit.resample('1h')['content'].count(),      # Line 73
             'avg_sentiment': (
-                twitter.resample('1H')['sentiment'].mean() +
-                reddit.resample('1H')['sentiment'].mean()
+                twitter.resample('1h')['sentiment'].mean() +               # Line 75
+                reddit.resample('1h')['sentiment'].mean()                  # Line 76
             ) / 2
-        }).fillna(0)
+        })
 
         # Merge everything
         return pd.merge(
@@ -84,13 +84,16 @@ class HypeAnalyzer:
             left_index=True,
             right_index=True,
             how='left'
-        ).fillna(method='ffill')
+        ).ffill()
+
     
     def _calculate_correlations(self, df):
-        """Calculate Pearson correlations between metrics"""
+        """Calculate Pearson correlations between metrics with NaN handling"""
         return {
             'price_sentiment_corr': df['close'].corr(df['avg_sentiment']),
-            'volume_mentions_corr': df['volume'].corr(df['twitter_mentions'] + df['reddit_posts'])
+            'volume_mentions_corr': df['volume'].corr(
+                df['twitter_mentions'] + df['reddit_posts']
+            )
         }
     
     def _detect_volume_spikes(self, df):
