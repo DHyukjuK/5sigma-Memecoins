@@ -1,0 +1,68 @@
+# stage2_macro_optimization.py
+
+import numpy as np
+import pandas as pd
+import cvxpy as cp
+
+from stage1_questionnaire import Questionnaire    # outputs γ risk‑aversion
+from stage1_metrics import AssetMetrics           # loads μ & Σ per regime
+
+def load_macro_data(path: str = "data/macro.csv") -> pd.DataFrame:
+    """
+    Load macroeconomic series with columns:
+      date, fedfunds, cpi, vix, ...
+    """
+    df = pd.read_csv(path, parse_dates=["date"])
+    df.set_index("date", inplace=True)
+    return df
+
+def classify_macro_regime(macros: pd.DataFrame, date: pd.Timestamp) -> str:
+    """
+    Simple rule‐based regime: high‐rate if Fed funds in top quartile,
+    otherwise 'normal'.
+    """
+    fed = macros["fedfunds"]
+    if fed.loc[date] > fed.quantile(0.75):
+        return "high_rate"
+    else:
+        return "normal"
+
+def optimize_portfolio(as_of: pd.Timestamp = None) -> np.ndarray:
+    # 1. Get investor risk aversion γ
+    γ = Questionnaire().get_risk_aversion()
+
+    # 2. Load and classify today's macro regime
+    macros = load_macro_data()
+    if as_of is None:
+        as_of = macros.index.max()
+    regime = classify_macro_regime(macros, as_of)
+
+    # 3. Load asset metrics for this regime
+    #    AssetMetrics.load(regime) returns dict with:
+    #      'expected_returns': np.array, shape (n,)
+    #      'covariance_matrix': np.array, shape (n, n)
+    metrics = AssetMetrics().load(regime=regime)
+    μ = metrics["expected_returns"]
+    Σ = metrics["covariance_matrix"]
+
+    # 4. Solve mean–variance QP:
+    #    max_w μᵀw − (γ/2) wᵀΣw
+    #    s.t. ∑w = 1, w ≥ 0
+    n = μ.shape[0]
+    w = cp.Variable(n)
+    ret = μ.T @ w
+    risk = cp.quad_form(w, Σ)
+    objective = cp.Maximize(ret - (γ / 2) * risk)
+
+    constraints = [
+        cp.sum(w) == 1,
+        w >= 0
+    ]
+    prob = cp.Problem(objective, constraints)
+    prob.solve(solver=cp.SCS)
+
+    return w.value
+
+if __name__ == "__main__":
+    weights = optimize_portfolio()
+    print("Optimal weights:", weights)
