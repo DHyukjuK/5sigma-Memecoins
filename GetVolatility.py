@@ -1,47 +1,58 @@
-import requests
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
+import time
 
-def get_shib_usd_average_volatility():
-    url = "https://marketmilk.babypips.com/symbols/SHIBUSD/volatility?source=coinbase"
-    
+# Setup headless Chrome
+options = Options()
+options.add_argument("--headless=new")
+options.add_argument("--disable-gpu")
+options.add_argument("--no-sandbox")
+options.add_argument("--disable-dev-shm-usage")
+
+driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+driver.set_window_size(1920, 1080)
+
+# Load the SHIB/USD volatility page
+driver.get("https://marketmilk.babypips.com/symbols/SHIBUSD/volatility?source=coinbase")
+
+# Dismiss any onboarding tooltips
+while True:
     try:
-        # Set headers to mimic a browser visit
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        # Make the request
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()  # Check for HTTP errors
-        
-        # Parse the HTML
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Find the average volatility element
-        avg_element = soup.find('span', class_='_averageValue_1cq16_28')
-        
-        if not avg_element:
-            raise ValueError("Could not find the average volatility element on the page")
-        
-        # Extract the precise value from the title attribute
-        precise_avg = avg_element.get('title', '').replace('%', '')
-        
-        # Extract the displayed value (fallback if title isn't available)
-        displayed_avg = avg_element.text.replace('%', '')
-        
-        # Use the precise value if available, otherwise use the displayed value
-        avg_volatility = precise_avg if precise_avg else displayed_avg
-        
-        # Convert to float
-        return float(avg_volatility)
-    
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        return None
+        tooltip_button = WebDriverWait(driver, 3).until(
+            EC.element_to_be_clickable((By.XPATH,
+                "//button[.//text()[contains(., 'Got it')] or .//text()[contains(., 'Explore')]]"
+            ))
+        )
+        print(f"ℹ️ Dismissing tooltip: '{tooltip_button.text.strip()}'")
+        driver.execute_script("arguments[0].click();", tooltip_button)
+        time.sleep(0.5)
+    except:
+        print("✅ All tooltips dismissed.")
+        break
 
-# Get and display the average volatility
-avg_vol = get_shib_usd_average_volatility()
-if avg_vol is not None:
-    print(f"Average volatility for SHIB/USD over the last 3 months: {avg_vol:.4f}%")
-else:
-    print("Failed to retrieve volatility data.")
+# Wait for the Volatility Per Day section to be present
+WebDriverWait(driver, 10).until(
+    EC.presence_of_element_located((By.ID, "day"))
+)
+
+# Extract daily volatility value (from default timeframe shown)
+soup = BeautifulSoup(driver.page_source, "html.parser")
+daily_volatility = None
+try:
+    updated_span = soup.find("section", {"id": "day"}).find("span", class_="_averageValue_1cq16_28")
+    if updated_span:
+        daily_volatility = updated_span.get_text(strip=True)
+        print("📊 Current Daily Volatility:", daily_volatility)
+    else:
+        print("❌ Volatility span not found.")
+except Exception as e:
+    print("❌ Error extracting volatility:", e)
+
+# Done
+driver.quit()
